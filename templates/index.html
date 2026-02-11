@@ -13,18 +13,51 @@
             <div class="header-left">
                 <h1>Multi model chatting utility</h1>
             </div>
-            <div class="panel-count-selector">
-                <label for="panelCount">Panels:</label>
-                <select id="panelCount">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6" selected>6</option>
-                </select>
+            <div class="header-controls">
+                <div class="panel-count-selector">
+                    <label for="panelCount">Panels:</label>
+                    <select id="panelCount">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6" selected>6</option>
+                    </select>
+                </div>
+                <button id="systemMessageBtn" class="btn btn-sm" title="Set system message">System Message</button>
+                <button id="newTabBtn" class="btn btn-sm" title="Open new tab">New Tab</button>
             </div>
         </header>
+
+        <div id="systemMessageModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>System Message</h2>
+                    <button class="modal-close" id="closeSystemMessageBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="system-message-section">
+                        <label for="globalSystemMessage">For all panels:</label>
+                        <textarea id="globalSystemMessage" placeholder="e.g., You are a helpful assistant that answers concisely..." rows="3"></textarea>
+                    </div>
+                    <div class="system-message-divider">— OR —</div>
+                    <div class="system-message-section">
+                        <label for="panelSystemSelect">For a specific panel:</label>
+                        <div style="display: flex; gap: 8px;">
+                            <select id="panelSystemSelect" style="flex: 1;">
+                                <option value="">Select a panel...</option>
+                            </select>
+                            <button id="clearPanelSystemBtn" class="btn btn-sm">Clear</button>
+                        </div>
+                        <textarea id="panelSystemMessage" placeholder="Custom system message for this panel..." rows="3" style="margin-top: 8px;"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="closeSystemMessageBtnFooter" class="btn">Done</button>
+                </div>
+            </div>
+        </div>
 
         <div class="panels-grid grid-6" id="panelsGrid">
             <!-- Panels will be generated here by JavaScript -->

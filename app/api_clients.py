@@ -2,7 +2,7 @@ import httpx
 import time
 import json
 from typing import Tuple, Optional, Dict
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 
 def extract_anthropic_content(content_blocks: list) -> Tuple[Optional[str], Optional[str]]:
@@ -106,14 +106,25 @@ async def call_anthropic_opus_46(messages: list, api_key: str) -> Tuple[Dict, fl
         if not api_key:
             raise ValueError("API key is empty")
 
-        client = Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=16000,
-            messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
-        )
+        # Extract system message if present (Anthropic uses separate system parameter)
+        system_message = None
+        filtered_messages = messages
+        if messages and messages[0].get("role") == "system":
+            system_message = messages[0].get("content")
+            filtered_messages = messages[1:]
+
+        client = AsyncAnthropic(api_key=api_key)
+        create_params = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 16000,
+            "messages": filtered_messages,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+        }
+        if system_message:
+            create_params["system"] = system_message
+
+        response = await client.messages.create(**create_params)
 
         if not response.content:
             raise ValueError("Anthropic API returned empty content")
@@ -138,13 +149,24 @@ async def call_anthropic_opus_45(messages: list, api_key: str) -> Tuple[Dict, fl
         if not api_key:
             raise ValueError("API key is empty")
 
-        client = Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-opus-4-5-20251101",
-            max_tokens=16000,
-            messages=messages,
-            thinking={"type": "enabled", "budget_tokens": 5000},
-        )
+        # Extract system message if present (Anthropic uses separate system parameter)
+        system_message = None
+        filtered_messages = messages
+        if messages and messages[0].get("role") == "system":
+            system_message = messages[0].get("content")
+            filtered_messages = messages[1:]
+
+        client = AsyncAnthropic(api_key=api_key)
+        create_params = {
+            "model": "claude-opus-4-5-20251101",
+            "max_tokens": 16000,
+            "messages": filtered_messages,
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+        }
+        if system_message:
+            create_params["system"] = system_message
+
+        response = await client.messages.create(**create_params)
 
         if not response.content:
             raise ValueError("Anthropic API returned empty content")

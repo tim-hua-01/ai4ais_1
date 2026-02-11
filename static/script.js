@@ -21,6 +21,8 @@ const AVAILABLE_MODELS = [
 let panelStates = [];
 let currentPanelCount = 6;
 let globalRequestInProgress = false;
+let globalSystemMessage = "";
+let selectedPanelForSystemMessage = null;
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", () => {
@@ -56,6 +58,7 @@ function initializePanels(count = 6) {
             resetBtn: panel.querySelector(".panel-reset-btn"),
             modelSelect: panel.querySelector(".panel-model-select"),
             isRequesting: false,
+            systemMessage: "",
         };
 
         // Setup panel event listeners
@@ -114,6 +117,7 @@ function setupEventListeners() {
     const sendAllBtn = document.getElementById("sendAllBtn");
     const globalInput = document.getElementById("globalInput");
     const panelCountSelect = document.getElementById("panelCount");
+    const newTabBtn = document.getElementById("newTabBtn");
     const resizeHandle = document.querySelector(".main-resize-handle");
     const panelsGrid = document.getElementById("panelsGrid");
 
@@ -126,6 +130,59 @@ function setupEventListeners() {
     });
     panelCountSelect.addEventListener("change", (e) => {
         initializePanels(parseInt(e.target.value));
+    });
+    newTabBtn.addEventListener("click", () => {
+        window.open(window.location.href, "_blank");
+    });
+
+    // System Message modal
+    const systemMessageBtn = document.getElementById("systemMessageBtn");
+    const systemMessageModal = document.getElementById("systemMessageModal");
+    const closeSystemMessageBtn = document.getElementById("closeSystemMessageBtn");
+    const closeSystemMessageBtnFooter = document.getElementById("closeSystemMessageBtnFooter");
+    const globalSystemMessageInput = document.getElementById("globalSystemMessage");
+    const panelSystemSelect = document.getElementById("panelSystemSelect");
+    const panelSystemMessageInput = document.getElementById("panelSystemMessage");
+    const clearPanelSystemBtn = document.getElementById("clearPanelSystemBtn");
+
+    // Open modal
+    systemMessageBtn.addEventListener("click", () => {
+        globalSystemMessageInput.value = globalSystemMessage;
+        updatePanelSystemSelectDropdown();
+        systemMessageModal.style.display = "flex";
+    });
+
+    // Close modal
+    const closeModal = () => {
+        saveSystemMessages();
+        systemMessageModal.style.display = "none";
+    };
+    closeSystemMessageBtn.addEventListener("click", closeModal);
+    closeSystemMessageBtnFooter.addEventListener("click", closeModal);
+
+    // Close modal when clicking outside
+    systemMessageModal.addEventListener("click", (e) => {
+        if (e.target === systemMessageModal) {
+            closeModal();
+        }
+    });
+
+    // Update panel system message display when panel is selected
+    panelSystemSelect.addEventListener("change", (e) => {
+        selectedPanelForSystemMessage = parseInt(e.target.value);
+        if (!isNaN(selectedPanelForSystemMessage)) {
+            panelSystemMessageInput.value = panelStates[selectedPanelForSystemMessage].systemMessage;
+        } else {
+            panelSystemMessageInput.value = "";
+        }
+    });
+
+    // Clear panel system message
+    clearPanelSystemBtn.addEventListener("click", () => {
+        if (!isNaN(selectedPanelForSystemMessage)) {
+            panelStates[selectedPanelForSystemMessage].systemMessage = "";
+            panelSystemMessageInput.value = "";
+        }
     });
 
     // Setup main resize handle
@@ -163,6 +220,78 @@ function resetPanelChat(panelIndex) {
     panelStates[panelIndex].input.value = "";
 }
 
+function updatePanelSystemSelectDropdown() {
+    const panelSystemSelect = document.getElementById("panelSystemSelect");
+    const currentValue = panelSystemSelect.value;
+    panelSystemSelect.innerHTML = '<option value="">Select a panel...</option>';
+
+    for (let i = 0; i < panelStates.length; i++) {
+        const option = document.createElement("option");
+        option.value = i;
+        option.textContent = `Panel ${i + 1} (${panelStates[i].model.split("/")[1] || panelStates[i].model})`;
+        panelSystemSelect.appendChild(option);
+    }
+
+    panelSystemSelect.value = currentValue;
+}
+
+function saveSystemMessages() {
+    const newGlobalSystemMessage = document.getElementById("globalSystemMessage").value;
+
+    // If global system message changed, update all panels
+    if (newGlobalSystemMessage !== globalSystemMessage) {
+        globalSystemMessage = newGlobalSystemMessage;
+
+        // Update or remove system message in all panels
+        for (let i = 0; i < panelStates.length; i++) {
+            // Remove existing system message if present
+            if (panelStates[i].messages.length > 0 &&
+                panelStates[i].messages[0].role === "system" &&
+                !panelStates[i].systemMessage) {
+                panelStates[i].messages.shift();
+            }
+
+            // Add new global system message if set
+            if (globalSystemMessage && !panelStates[i].systemMessage) {
+                panelStates[i].messages.unshift({
+                    role: "system",
+                    content: globalSystemMessage,
+                });
+            }
+        }
+    }
+
+    // Update panel-specific system message
+    if (!isNaN(selectedPanelForSystemMessage) && selectedPanelForSystemMessage !== null) {
+        const newPanelSystemMessage = document.getElementById("panelSystemMessage").value;
+        const panelIndex = selectedPanelForSystemMessage;
+
+        if (newPanelSystemMessage !== panelStates[panelIndex].systemMessage) {
+            panelStates[panelIndex].systemMessage = newPanelSystemMessage;
+
+            // Remove existing system messages from this panel
+            while (panelStates[panelIndex].messages.length > 0 &&
+                   panelStates[panelIndex].messages[0].role === "system") {
+                panelStates[panelIndex].messages.shift();
+            }
+
+            // Add panel-specific system message first
+            if (newPanelSystemMessage) {
+                panelStates[panelIndex].messages.unshift({
+                    role: "system",
+                    content: newPanelSystemMessage,
+                });
+            } else if (globalSystemMessage) {
+                // Fall back to global if panel message is cleared
+                panelStates[panelIndex].messages.unshift({
+                    role: "system",
+                    content: globalSystemMessage,
+                });
+            }
+        }
+    }
+}
+
 async function sendToAllModels() {
     if (globalRequestInProgress) return;
 
@@ -186,7 +315,7 @@ async function sendToAllModels() {
     globalInput.value = "";
     globalInput.focus();
 
-    // Prepare request
+    // Prepare request (system messages already in state.messages as first element)
     const panels = panelStates.map((state) => ({
         model: state.model,
         messages: state.messages,
@@ -215,7 +344,7 @@ async function sendToPanelMessage(panelIndex) {
     displayMessage(panelIndex, "user", message);
     state.input.value = "";
 
-    // Prepare request (only this panel enabled)
+    // Prepare request (only this panel enabled, system messages already in s.messages)
     const panels = panelStates.map((s, idx) => ({
         model: s.model,
         messages: s.messages,
@@ -437,8 +566,16 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
 
         state.chatArea.appendChild(messageDiv);
 
-        // Scroll to bottom
-        state.chatArea.scrollTop = state.chatArea.scrollHeight;
+        // Force reflow to ensure rendering happens immediately
+        state.chatArea.offsetHeight;
+
+        // Use requestAnimationFrame to ensure rendering on next frame
+        requestAnimationFrame(() => {
+            // Scroll to bottom
+            state.chatArea.scrollTop = state.chatArea.scrollHeight;
+            // Force another reflow
+            state.chatArea.offsetHeight;
+        });
     } catch (e) {
         console.error(`Error creating message element for panel ${panelIndex}:`, e);
     }
