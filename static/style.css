@@ -156,7 +156,8 @@ body {
     background: #f0f0f0;
 }
 
-.panel-model-select {
+.panel-model-select,
+.panel-effort-select {
     padding: 6px 8px;
     border: 1px solid #d0d0d0;
     border-radius: 3px;
@@ -164,13 +165,21 @@ body {
     background: white;
     cursor: pointer;
     white-space: nowrap;
+    max-width: 45%;
 }
 
-.panel-model-select:hover {
+.panel-effort-select {
+    max-width: 30%;
+    color: #555;
+}
+
+.panel-model-select:hover,
+.panel-effort-select:hover {
     border-color: #1a1a1a;
 }
 
-.panel-model-select:focus {
+.panel-model-select:focus,
+.panel-effort-select:focus {
     outline: none;
     border-color: #1a1a1a;
     box-shadow: 0 0 0 2px rgba(26, 26, 26, 0.1);

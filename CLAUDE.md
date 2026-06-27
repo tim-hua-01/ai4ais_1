@@ -43,47 +43,30 @@ Then open `http://localhost:8000` in your browser.
 
 ## Multi-Model Comparison Panel Web Application
 
-The project includes a FastAPI-based web application for comparing responses from multiple LLMs side-by-side.
+The project includes a FastAPI-based web application for comparing responses from multiple LLMs side-by-side. It is **config-driven**: models and providers are defined in `config/models.yaml`, not in code.
 
 ### Architecture
-- **Backend**: `app/main.py` - FastAPI server with async API endpoints
-- **API Clients**: `app/api_clients.py` - Async HTTP clients for 6 different LLM providers
-- **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - Interactive panel UI
-- **Configuration**: `.env` file for API keys
+- **Config**: `config/models.yaml` - single source of truth for models, backends, and UI defaults.
+- **Config loader**: `app/config.py` - parses the YAML into typed dataclasses (`ModelConfig`, `BackendConfig`, `AppConfig`).
+- **API Clients**: `app/api_clients.py` - two generic handlers, `call_openai_compatible` (httpx) and `call_anthropic` (SDK), with `call_model()` dispatching by backend type.
+- **Backend**: `app/main.py` - FastAPI server. Endpoints: `/api/models`, `/api/config`, `/api/chat`.
+- **Frontend**: `templates/index.html`, `static/style.css`, `static/script.js` - loads the model catalog from `/api/models` at runtime; nothing about models is hardcoded.
 
-### Supported Models
-1. **OpenAI GPT-5.2** - `reasoning_effort: "medium"`
-2. **Anthropic Claude 4.6 Opus** - Extended thinking with adaptive effort (`"high"`)
-3. **Anthropic Claude 4.5 Opus** - Extended thinking with `thinking_budget_tokens: 1500`
-4. **Z.AI GLM-4.7** - Standard chat completion
-5. **Moonshot Kimi K2.5** - OpenAI-compatible API
-6. **OpenRouter Gemini-3-pro-preview** - OpenAI-compatible API
+### Bundled models
+chat-latest, gpt-5.2 (OpenAI); claude-opus-4.6, claude-opus-4.5 (Anthropic); glm-5.2, kimi-k2.5, gemini-3.1-pro, gemini-3.5-flash (all via OpenRouter). See `config/models.yaml`.
 
-### Features
-- Up to 6 panels, each with a selectable model dropdown
-- Global message input to send to all models simultaneously
-- Per-panel message input for model-specific queries
-- Response timing display (in seconds) for latency comparison
-- Multi-turn conversation support with history per panel
-- Async parallel API calls for fast response aggregation
+### Reasoning effort
+Each model has a default `reasoning_effort`; the UI dropdown overrides it per panel. The wire encoding is set by the backend/model `reasoning_style`: `effort` (OpenAI), `openrouter` (`reasoning: {effort}`), `adaptive` (Anthropic adaptive + `output_config.effort`), `budget` (Anthropic `thinking_budget_tokens`), or `none`.
 
 ### Setup
-Configure API keys in `.env` before running:
-```
-OPENAI_API_KEY=your_key
-ANTHROPIC_API_KEY=your_key
-ZAI_API_KEY=your_key
-MOONSHOT_API_KEY=your_key
-OPENROUTER_API_KEY=your_key
-```
+API keys are read from the **environment** (no `.env`/dotenv) — set the relevant vars before starting the server. Relevant vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` (GLM/Kimi/Gemini all route through OpenRouter). Override the config path with `AI4AIS_CONFIG`.
 
 ### Implementation Notes
-- All API calls use `httpx.AsyncClient` for async HTTP requests
-- Requests executed in parallel via `asyncio.gather` for efficiency
-- Timing measured server-side for accuracy
-- Error handling returns error messages displayed in panels
-- Frontend maintains conversation history client-side per panel
-- Each API client function returns `(response_content, duration_in_seconds)` tuple
+- OpenAI-compatible calls use `httpx.AsyncClient`; Anthropic uses the official async SDK.
+- Requests executed in parallel via `asyncio.gather`; timing measured server-side.
+- Each handler returns `(response_dict, duration_seconds)` where the dict has `content` and `thinking` keys.
+- Errors are returned as `Error: ...` content strings and shown in the panel, never raised to the client.
+- `test_models.py` is a config-driven smoke test (`python test_models.py [model_id ...]`).
 
 ## Key Framework: inspect-ai
 

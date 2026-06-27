@@ -1,216 +1,152 @@
 # AI4AIS Multi-Model Comparison Panel
 
-A local web application for comparing responses from multiple Large Language Models (LLMs) side-by-side. Send the same prompt to up to 6 different models simultaneously and compare their responses, timing, and reasoning processes.
+A local web app for comparing responses from multiple LLMs side-by-side. Send the
+same prompt to up to 6 models at once and compare their answers, reasoning, and
+latency.
+
+Everything about *which* models exist and *how* they're called lives in a single
+YAML file — **`config/models.yaml`**. Adding a model or a whole new provider is a
+config edit, not a code change.
 
 ## Features
 
-- **Multi-Model Comparison**: Compare up to 6 different LLM models side-by-side
-- **Real-Time Responses**: Models respond independently with individual response timing
-- **Extended Thinking Display**: View reasoning/thinking blocks in collapsible dropdowns
-- **Markdown Rendering**: All responses render markdown for better readability
-- **Editable Panel Labels**: Customize each panel's title with notes about configuration
-- **Per-Panel Controls**: Send messages to individual models or all models at once
-- **Resizable Panels**: Adjust chat area height by dragging the divider between chat and input
-- **Response Timing**: See how long each model takes to respond
-- **Per-Model History**: Each panel maintains independent conversation history
+- **Fully config-driven**: models, providers, and defaults all come from `config/models.yaml`.
+- **Per-model reasoning effort**: set a default in the config, and override it per
+  panel at runtime from a dropdown in the panel header.
+- **Multi-provider**: OpenAI, Anthropic, and anything OpenAI-compatible via
+  OpenRouter (GLM, Kimi/Moonshot, and Gemini all run through OpenRouter here).
+- **Up to 6 panels**, each with its own model, reasoning effort, and conversation.
+- **Extended thinking / reasoning** shown in a collapsible dropdown per response.
+- **System messages** — global (all panels) or per-panel.
+- **Markdown rendering**, response timing, parallel requests.
 
-## Supported Models
+## Bundled models
 
-1. **OpenAI GPT-5.2** - `openai/gpt-5.2`
-   - Uses `reasoning_effort: "medium"` for structured reasoning
+| Panel id | Provider | Backend | Wire model name | Default effort |
+|---|---|---|---|---|
+| `chat-latest` | OpenAI | openai | `chat-latest` | medium |
+| `gpt-5.2` | OpenAI | openai | `gpt-5.2` | medium |
+| `claude-opus-4.6` | Anthropic | anthropic | `claude-opus-4-6` | high (adaptive) |
+| `claude-opus-4.5` | Anthropic | anthropic | `claude-opus-4-5-20251101` | budget (5k tokens) |
+| `glm-5.2` | Z.AI | openrouter | `z-ai/glm-5.2` | medium |
+| `kimi-k2.5` | Moonshot | openrouter | `moonshotai/kimi-k2.5` | none |
+| `gemini-3.1-pro` | Google | openrouter | `google/gemini-3.1-pro-preview` | medium |
+| `gemini-3.5-flash` | Google | openrouter | `google/gemini-3.5-flash` | minimal |
 
-2. **Anthropic Claude 4.6 Opus** - `anthropic/claude-4.6-opus`
-   - Extended thinking with adaptive effort (`effort: "high"`)
+## Setup & running
 
-3. **Anthropic Claude 4.5 Opus** - `anthropic/claude-4.5-opus`
-   - Extended thinking with 5000 token budget
+API keys are read **straight from the environment** (no `.env` / dotenv). Run the
+server with the provider API keys set in your environment.
 
-4. **Z.AI GLM-4.7** - `zai/glm-4.7`
-   - Standard chat completion with reasoning support
+Required env vars (only for the providers you actually use):
 
-5. **Moonshot Kimi K2.5** - `moonshotai/kimi-k2.5`
-   - OpenAI-compatible API with reasoning capabilities
+```
+OPENAI_API_KEY        # OpenAI models
+ANTHROPIC_API_KEY     # Claude models
+OPENROUTER_API_KEY    # GLM, Kimi/Moonshot, Gemini (all routed via OpenRouter)
+```
 
-6. **OpenRouter Gemini-3-pro-preview** - `openrouter/google/gemini-3-pro-preview`
-   - OpenAI-compatible API via OpenRouter
+```bash
+uv sync
+uvicorn app.main:app --reload --port 8000
+# then open http://localhost:8000
+```
 
-## Setup
+To point at a different config file, set `AI4AIS_CONFIG=/path/to/your.yaml`.
 
-### Prerequisites
+### Smoke test
 
-- Python 3.11+
-- `uv` package manager (or `pip`)
-- API keys for the models you want to use
+`test_models.py` sends a short prompt (with a system message) to every configured
+model that has an API key, and checks it responds:
 
-### Installation
+```bash
+python test_models.py                 # all configured models
+python test_models.py glm-5.2 gpt-5.2 # only these ids
+```
 
-1. **Install dependencies**:
-   ```bash
-   uv sync
-   ```
+## Configuring models
 
-2. **Create `.env` file** with your API keys:
-   ```
-   OPENAI_API_KEY=your_openai_key
-   ANTHROPIC_API_KEY=your_anthropic_key
-   ZAI_API_KEY=your_zai_key
-   MOONSHOT_API_KEY=your_moonshot_key
-   OPENROUTER_API_KEY=your_openrouter_key
-   ```
+Open `config/models.yaml`. It has three sections:
 
-3. **Run the server**:
-   ```bash
-   uvicorn app.main:app --reload --port 8000
-   ```
+- **`defaults`** — app-wide fallbacks (max_tokens, timeout, panel count, and the
+  list of reasoning-effort options shown in the UI).
+- **`backends`** — providers. Each defines a `type` (`openai`-compatible or
+  `anthropic`), `base_url`, `api_key_env`, and a `reasoning_style` that controls
+  how reasoning effort is encoded on the wire.
+- **`models`** — selectable models, each pointing at a backend.
 
-4. **Open in browser**:
-   ```
-   http://localhost:8000
-   ```
+### Add a model
 
-## Usage
+```yaml
+models:
+  - id: my-model
+    label: My Model
+    backend: openrouter          # must match a key under `backends:`
+    model_name: vendor/my-model  # the provider's own id
+    reasoning_effort: high
+    max_tokens: 32000
+```
 
-### Main Interface
+### Add a provider
 
-- **Panel Count Selector**: Choose 1-6 panels in the header dropdown
-- **Panel Titles**: Click any panel title to edit and add custom notes
-- **Model Selector**: Narrow dropdown to change which model runs in each panel
+```yaml
+backends:
+  my-provider:
+    type: openai                 # OpenAI-compatible /chat/completions
+    base_url: https://api.example.com/v1
+    api_key_env: MY_PROVIDER_API_KEY
+    reasoning_style: effort      # or "openrouter" / "none"
+    max_tokens_param: max_tokens
+```
 
-### Sending Messages
+### Reasoning effort
 
-#### Send to All Models
-- Type your message in the main input area (bottom of screen)
-- Click **"Send to All"** button (right side) OR
-- Press **Cmd+Enter** (macOS) / **Ctrl+Enter** (Windows)
-- Press **Shift+Enter** to add a newline in your message
-- The message appears in all panels and sends to all selected models in parallel
+Each model has a default `reasoning_effort`; the panel dropdown lets you override
+it per request (`default` keeps the model's configured value). How it's sent
+depends on the backend's (or model's) `reasoning_style`:
 
-#### Send to Single Model
-- Type in the input field at the bottom of a specific panel
-- Click **"Send"** button for that panel OR
-- Press **Enter** to send
-- Press **Shift+Enter** to add a newline in your message
-- The message only appears in that panel's conversation
-- You can send to individual panels while waiting for other models to respond
+| `reasoning_style` | Encoding |
+|---|---|
+| `effort` | `reasoning_effort: <value>` (OpenAI native) |
+| `openrouter` | `reasoning: {effort: <value>}` (OpenRouter unified) |
+| `adaptive` | Anthropic adaptive thinking + `output_config.effort` (Opus 4.7/4.8+) |
+| `budget` | Anthropic manual extended thinking via `thinking_budget_tokens` |
+| `none` | no reasoning params sent |
 
-### Panel Controls
-
-- **Reset**: Clear a single panel's conversation history without affecting others
-- **Model Selector**: Change which model is used in a panel (narrow dropdown in panel header)
-- **Editable Title**: Click the panel title to rename it with configuration notes
-- **Main Resize Divider**: Drag the divider between panels and input section to adjust space allocation
-
-### Response Features
-
-- **Thinking/Reasoning Blocks**: Click "Thinking (click to expand)" to view extended thinking
-  - GPT-5.2 shows reasoning steps
-  - Claude 4.6/4.5 show extended thinking content
-  - Other models show reasoning content if available
-
-- **Markdown Support**: Responses render:
-  - Bold, italic, code formatting
-  - Links
-  - Lists and blockquotes
-  - Code blocks with syntax highlighting
-
-- **Response Timing**: Gray text below responses shows how long the model took to respond (in seconds)
+An effort of `none`/`default` (or empty) sends no reasoning parameter.
 
 ## Architecture
 
-### Backend
-- **Framework**: FastAPI (async Python web framework)
-- **API Clients**: Async HTTP clients for each model provider
-  - Uses official Anthropic SDK for Claude models
-  - Uses `httpx.AsyncClient` for other providers
-- **Concurrency**: All model requests run in parallel using `asyncio.gather()`
-
-### Frontend
-- **HTML/CSS/JavaScript**: Vanilla implementation (no framework)
-- **Markdown Rendering**: `marked.js` library for markdown-to-HTML conversion
-- **Styling**: Clean, responsive CSS with beige/tan color scheme
-
-### File Structure
 ```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI server and request routing
-│   └── api_clients.py       # API client implementations for 6 models
-├── static/
-│   ├── script.js            # Frontend interaction logic
-│   └── style.css            # Styling and layout
-├── templates/
-│   └── index.html           # Main HTML page
-├── .env                     # API keys (create this)
-├── pyproject.toml           # Project dependencies
-└── README.md               # This file
+app/
+  config.py        # YAML -> typed dataclasses (models, backends, defaults)
+  api_clients.py   # generic handlers: call_openai_compatible / call_anthropic
+  main.py          # FastAPI: /api/models, /api/config, /api/chat
+config/
+  models.yaml      # the single source of truth for models & providers
+static/            # script.js, style.css (vanilla JS frontend)
+templates/         # index.html
+test_models.py     # config-driven smoke test
 ```
 
-## Keyboard Shortcuts
+- **Backend dispatch**: `call_model()` routes to `call_anthropic` (official SDK)
+  or `call_openai_compatible` (`httpx`) based on the backend type. This mirrors
+  how a generic multi-backend LLM client builds per-backend sampling params.
+- **Frontend** fetches `/api/models` and `/api/config` on load, so the model
+  dropdowns and reasoning selectors are populated entirely from the server.
+- **Concurrency**: all enabled panels run in parallel via `asyncio.gather`.
+
+## Keyboard shortcuts
 
 | Shortcut | Action |
-|----------|--------|
-| **Cmd+Enter** (macOS) / **Ctrl+Enter** (Windows) | Send message to all models |
-| **Enter** (in panel input) | Send to that panel's model |
-| **Shift+Enter** (any input) | Add a newline to your message |
+|---|---|
+| Cmd/Ctrl+Enter | Send to all models |
+| Enter (panel input) | Send to that panel |
+| Shift+Enter | Newline |
 
-## Color Scheme
+## Notes & limitations
 
-- **User Messages**: Warm tan beige (#dcc6b8)
-- **Model Responses**: Lighter beige (#ede5db)
-- **Text**: Black on both for high contrast
-- **Panel Borders**: Dark gray for clear visual separation
-- **Links**: Black with underline on hover
-
-## Troubleshooting
-
-### Model returns "Error: API key not configured"
-- Verify your `.env` file has the correct environment variables
-- Check that API keys are not placeholders like `your_key`
-
-### No response from a model
-- Check API key is valid for that provider
-- Check rate limits haven't been exceeded
-- Look at browser console (F12) for error messages
-- Check server logs for detailed error information
-
-### Responses are slow or timing out
-- Some models have higher latency
-- Check your internet connection
-- Consider trying with fewer panels initially
-
-## Performance Notes
-
-- All model requests run in parallel - waiting time = slowest model, not sum of all
-- Response timing is measured server-side for accuracy
-- Chat history stored in browser memory (clears on page refresh)
-- Markdown rendering happens in the browser after receiving response
-
-## Development
-
-To modify the code:
-
-1. **API Clients**: Edit `app/api_clients.py` to change model parameters or add new models
-2. **Server Logic**: Edit `app/main.py` to change request handling
-3. **Frontend Logic**: Edit `static/script.js` for UI interactions
-4. **Styling**: Edit `static/style.css` for visual changes
-5. **HTML Structure**: Edit `templates/index.html` for layout changes
-
-All files hot-reload when running with `--reload` flag.
-
-## Limitations
-
-- Conversations are not persisted (lost on page refresh)
-- No authentication/user management
-- Maximum token limits depend on each model's API
-- Some models may have usage rate limits
-
-## Future Enhancements
-
-Possible improvements:
-- Save/export conversations
-- Add more models
-- Streaming responses
-- User authentication
-- Conversation history persistence
-- Custom system prompts per panel
+- Conversations live in browser memory (cleared on refresh).
+- Model slugs (e.g. Gemini/GLM versions) change over time on OpenRouter; if a
+  model 400s with "not a valid model ID", update its `model_name` in the YAML.
+- No auth/persistence; intended for local use.

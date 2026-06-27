@@ -1,21 +1,17 @@
-// Configuration
-const DEFAULT_MODELS = [
-    "openai/gpt-5.2",
-    "anthropic/claude-4.6-opus",
-    "anthropic/claude-4.5-opus",
-    "zai/glm-4.7",
-    "moonshotai/kimi-k2.5",
-    "openrouter/google/gemini-3-pro-preview",
-];
+// =============================================================================
+// Multi-model comparison panel — frontend
+// =============================================================================
+// The model catalog and UI defaults come from the backend (/api/models and
+// /api/config), which are driven by config/models.yaml. Nothing about which
+// models exist or their reasoning options is hardcoded here.
+// =============================================================================
 
-const AVAILABLE_MODELS = [
-    "openai/gpt-5.2",
-    "anthropic/claude-4.6-opus",
-    "anthropic/claude-4.5-opus",
-    "zai/glm-4.7",
-    "moonshotai/kimi-k2.5",
-    "openrouter/google/gemini-3-pro-preview",
-];
+// Model catalog: [{id, label, backend, reasoning_effort, available_efforts, configured, ...}]
+let AVAILABLE_MODELS = [];
+let MODELS_BY_ID = {};
+let DEFAULT_PANEL_MODELS = [];
+let REASONING_EFFORT_OPTIONS = ["default"];
+let DEFAULT_PANEL_COUNT = 6;
 
 // Application state
 let panelStates = [];
@@ -25,31 +21,82 @@ let globalSystemMessage = "";
 let selectedPanelForSystemMessage = null;
 
 // Initialize on page load
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+    await loadConfig();
     const panelCountSelect = document.getElementById("panelCount");
-    const initialCount = parseInt(panelCountSelect.value);
-    initializePanels(initialCount);
+    panelCountSelect.value = String(DEFAULT_PANEL_COUNT);
+    initializePanels(DEFAULT_PANEL_COUNT);
     setupEventListeners();
 });
 
-function initializePanels(count = 6) {
+async function loadConfig() {
+    try {
+        const [modelsRes, configRes] = await Promise.all([
+            fetch("/api/models"),
+            fetch("/api/config"),
+        ]);
+        const modelsData = await modelsRes.json();
+        const configData = await configRes.json();
+
+        AVAILABLE_MODELS = modelsData.models || [];
+        MODELS_BY_ID = {};
+        AVAILABLE_MODELS.forEach((m) => (MODELS_BY_ID[m.id] = m));
+
+        DEFAULT_PANEL_MODELS = configData.default_panel_models || AVAILABLE_MODELS.map((m) => m.id);
+        REASONING_EFFORT_OPTIONS = configData.reasoning_effort_options || ["default"];
+        DEFAULT_PANEL_COUNT = configData.panel_count || 6;
+    } catch (e) {
+        console.error("Failed to load config:", e);
+        alert("Failed to load model configuration from server. Check the server logs.");
+    }
+}
+
+function modelLabel(modelId) {
+    const m = MODELS_BY_ID[modelId];
+    return m ? m.label : modelId;
+}
+
+// Build the <option> list for a model dropdown, marking the unconfigured ones.
+function modelOptionsHtml(selectedId) {
+    return AVAILABLE_MODELS.map((m) => {
+        const warn = m.configured ? "" : " — no API key";
+        const selected = m.id === selectedId ? "selected" : "";
+        return `<option value="${m.id}" ${selected}>${m.label}${warn}</option>`;
+    }).join("");
+}
+
+// Build the reasoning-effort dropdown for a given model.
+function effortOptionsHtml(modelId, selectedEffort) {
+    const m = MODELS_BY_ID[modelId];
+    let options = m && m.available_efforts ? m.available_efforts.slice() : REASONING_EFFORT_OPTIONS.slice();
+    const sel = selectedEffort || "default";
+    return options
+        .map((e) => {
+            const labelMap = { default: `default (${(m && m.reasoning_effort) || "none"})` };
+            const label = labelMap[e] || e;
+            return `<option value="${e}" ${e === sel ? "selected" : ""}>${label}</option>`;
+        })
+        .join("");
+}
+
+function initializePanels(count) {
     const panelsGrid = document.getElementById("panelsGrid");
     panelsGrid.innerHTML = "";
     panelStates = [];
     currentPanelCount = count;
 
-    // Update grid class
     panelsGrid.className = `panels-grid grid-${count}`;
 
-    // Create panels
+    const fallbackModel = AVAILABLE_MODELS.length ? AVAILABLE_MODELS[0].id : "";
+
     for (let i = 0; i < count; i++) {
-        const model = DEFAULT_MODELS[i] || DEFAULT_MODELS[0];
+        const model = DEFAULT_PANEL_MODELS[i] || DEFAULT_PANEL_MODELS[0] || fallbackModel;
         const panel = createPanel(i, model);
         panelsGrid.appendChild(panel);
 
-        // Initialize panel state
         panelStates[i] = {
             model: model,
+            reasoningEffort: "default",
             messages: [],
             element: panel,
             chatArea: panel.querySelector(".chat-area"),
@@ -57,14 +104,12 @@ function initializePanels(count = 6) {
             sendBtn: panel.querySelector(".panel-send-btn"),
             resetBtn: panel.querySelector(".panel-reset-btn"),
             modelSelect: panel.querySelector(".panel-model-select"),
+            effortSelect: panel.querySelector(".panel-effort-select"),
             isRequesting: false,
             systemMessage: "",
         };
 
-        // Setup panel event listeners
-        panelStates[i].sendBtn.addEventListener("click", () =>
-            sendToPanelMessage(i)
-        );
+        panelStates[i].sendBtn.addEventListener("click", () => sendToPanelMessage(i));
         panelStates[i].input.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -73,10 +118,14 @@ function initializePanels(count = 6) {
         });
         panelStates[i].modelSelect.addEventListener("change", (e) => {
             panelStates[i].model = e.target.value;
+            // Refresh the effort dropdown for the newly selected model.
+            panelStates[i].reasoningEffort = "default";
+            panelStates[i].effortSelect.innerHTML = effortOptionsHtml(e.target.value, "default");
         });
-        panelStates[i].resetBtn.addEventListener("click", () => {
-            resetPanelChat(i);
+        panelStates[i].effortSelect.addEventListener("change", (e) => {
+            panelStates[i].reasoningEffort = e.target.value;
         });
+        panelStates[i].resetBtn.addEventListener("click", () => resetPanelChat(i));
     }
 }
 
@@ -89,10 +138,10 @@ function createPanel(index, model) {
             <div class="panel-title-wrapper">
                 <span class="panel-title-text" contenteditable="true">Model ${index + 1}</span>
                 <select class="panel-model-select">
-                    ${AVAILABLE_MODELS.map(
-                        (m) =>
-                            `<option value="${m}" ${m === model ? "selected" : ""}>${m}</option>`
-                    )}
+                    ${modelOptionsHtml(model)}
+                </select>
+                <select class="panel-effort-select" title="Reasoning effort">
+                    ${effortOptionsHtml(model, "default")}
                 </select>
             </div>
         </div>
@@ -145,14 +194,12 @@ function setupEventListeners() {
     const panelSystemMessageInput = document.getElementById("panelSystemMessage");
     const clearPanelSystemBtn = document.getElementById("clearPanelSystemBtn");
 
-    // Open modal
     systemMessageBtn.addEventListener("click", () => {
         globalSystemMessageInput.value = globalSystemMessage;
         updatePanelSystemSelectDropdown();
         systemMessageModal.style.display = "flex";
     });
 
-    // Close modal
     const closeModal = () => {
         saveSystemMessages();
         systemMessageModal.style.display = "none";
@@ -160,14 +207,12 @@ function setupEventListeners() {
     closeSystemMessageBtn.addEventListener("click", closeModal);
     closeSystemMessageBtnFooter.addEventListener("click", closeModal);
 
-    // Close modal when clicking outside
     systemMessageModal.addEventListener("click", (e) => {
         if (e.target === systemMessageModal) {
             closeModal();
         }
     });
 
-    // Update panel system message display when panel is selected
     panelSystemSelect.addEventListener("change", (e) => {
         selectedPanelForSystemMessage = parseInt(e.target.value);
         if (!isNaN(selectedPanelForSystemMessage)) {
@@ -177,7 +222,6 @@ function setupEventListeners() {
         }
     });
 
-    // Clear panel system message
     clearPanelSystemBtn.addEventListener("click", () => {
         if (!isNaN(selectedPanelForSystemMessage)) {
             panelStates[selectedPanelForSystemMessage].systemMessage = "";
@@ -185,7 +229,7 @@ function setupEventListeners() {
         }
     });
 
-    // Setup main resize handle
+    // Main resize handle
     let isResizing = false;
     let startY = 0;
     let startHeight = 0;
@@ -214,7 +258,6 @@ function setupEventListeners() {
 }
 
 function resetPanelChat(panelIndex) {
-    // Clear messages and chat display for a single panel
     panelStates[panelIndex].messages = [];
     panelStates[panelIndex].chatArea.innerHTML = "";
     panelStates[panelIndex].input.value = "";
@@ -228,7 +271,7 @@ function updatePanelSystemSelectDropdown() {
     for (let i = 0; i < panelStates.length; i++) {
         const option = document.createElement("option");
         option.value = i;
-        option.textContent = `Panel ${i + 1} (${panelStates[i].model.split("/")[1] || panelStates[i].model})`;
+        option.textContent = `Panel ${i + 1} (${modelLabel(panelStates[i].model)})`;
         panelSystemSelect.appendChild(option);
     }
 
@@ -238,30 +281,24 @@ function updatePanelSystemSelectDropdown() {
 function saveSystemMessages() {
     const newGlobalSystemMessage = document.getElementById("globalSystemMessage").value;
 
-    // If global system message changed, update all panels
     if (newGlobalSystemMessage !== globalSystemMessage) {
         globalSystemMessage = newGlobalSystemMessage;
 
-        // Update or remove system message in all panels
         for (let i = 0; i < panelStates.length; i++) {
-            // Remove existing system message if present
-            if (panelStates[i].messages.length > 0 &&
+            if (
+                panelStates[i].messages.length > 0 &&
                 panelStates[i].messages[0].role === "system" &&
-                !panelStates[i].systemMessage) {
+                !panelStates[i].systemMessage
+            ) {
                 panelStates[i].messages.shift();
             }
 
-            // Add new global system message if set
             if (globalSystemMessage && !panelStates[i].systemMessage) {
-                panelStates[i].messages.unshift({
-                    role: "system",
-                    content: globalSystemMessage,
-                });
+                panelStates[i].messages.unshift({ role: "system", content: globalSystemMessage });
             }
         }
     }
 
-    // Update panel-specific system message
     if (!isNaN(selectedPanelForSystemMessage) && selectedPanelForSystemMessage !== null) {
         const newPanelSystemMessage = document.getElementById("panelSystemMessage").value;
         const panelIndex = selectedPanelForSystemMessage;
@@ -269,24 +306,17 @@ function saveSystemMessages() {
         if (newPanelSystemMessage !== panelStates[panelIndex].systemMessage) {
             panelStates[panelIndex].systemMessage = newPanelSystemMessage;
 
-            // Remove existing system messages from this panel
-            while (panelStates[panelIndex].messages.length > 0 &&
-                   panelStates[panelIndex].messages[0].role === "system") {
+            while (
+                panelStates[panelIndex].messages.length > 0 &&
+                panelStates[panelIndex].messages[0].role === "system"
+            ) {
                 panelStates[panelIndex].messages.shift();
             }
 
-            // Add panel-specific system message first
             if (newPanelSystemMessage) {
-                panelStates[panelIndex].messages.unshift({
-                    role: "system",
-                    content: newPanelSystemMessage,
-                });
+                panelStates[panelIndex].messages.unshift({ role: "system", content: newPanelSystemMessage });
             } else if (globalSystemMessage) {
-                // Fall back to global if panel message is cleared
-                panelStates[panelIndex].messages.unshift({
-                    role: "system",
-                    content: globalSystemMessage,
-                });
+                panelStates[panelIndex].messages.unshift({ role: "system", content: globalSystemMessage });
             }
         }
     }
@@ -303,26 +333,21 @@ async function sendToAllModels() {
         return;
     }
 
-    // Add message to all panels
     for (let i = 0; i < panelStates.length; i++) {
-        panelStates[i].messages.push({
-            role: "user",
-            content: message,
-        });
+        panelStates[i].messages.push({ role: "user", content: message });
         displayMessage(i, "user", message);
     }
 
     globalInput.value = "";
     globalInput.focus();
 
-    // Prepare request (system messages already in state.messages as first element)
     const panels = panelStates.map((state) => ({
         model: state.model,
         messages: state.messages,
         enabled: true,
+        reasoning_effort: state.reasoningEffort,
     }));
 
-    // Send to backend with streaming-like behavior
     await sendRequestStreaming(panels, true);
 }
 
@@ -331,24 +356,17 @@ async function sendToPanelMessage(panelIndex) {
 
     const state = panelStates[panelIndex];
     const message = state.input.value.trim();
+    if (!message) return;
 
-    if (!message) {
-        return;
-    }
-
-    // Add message to this panel only
-    state.messages.push({
-        role: "user",
-        content: message,
-    });
+    state.messages.push({ role: "user", content: message });
     displayMessage(panelIndex, "user", message);
     state.input.value = "";
 
-    // Prepare request (only this panel enabled, system messages already in s.messages)
     const panels = panelStates.map((s, idx) => ({
         model: s.model,
         messages: s.messages,
         enabled: idx === panelIndex,
+        reasoning_effort: s.reasoningEffort,
     }));
 
     await sendRequestStreaming(panels, false, panelIndex);
@@ -369,17 +387,14 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
     }
 
     try {
-        // Send requests in parallel and display as they complete
-        const requests = panels.map((panel, panelIndex) => {
-            if (!panel.enabled || panelIndex >= panelStates.length) {
+        const requests = panels.map((panel, idx) => {
+            if (!panel.enabled || idx >= panelStates.length) {
                 return Promise.resolve();
             }
 
             return fetch("/api/chat", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ panels: [panel] }),
             })
                 .then((response) => {
@@ -394,21 +409,11 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
                     }
 
                     const result = data.results[0];
+                    if (result === null) return;
 
-                    if (result === null) {
-                        return; // Panel disabled
-                    }
-
-                    // Validate result object
                     if (typeof result !== "object" || !("content" in result)) {
-                        console.error(`Invalid result format for panel ${panelIndex}:`, result);
-                        displayMessage(
-                            panelIndex,
-                            "assistant",
-                            "Error: Invalid response from server",
-                            0,
-                            null
-                        );
+                        console.error(`Invalid result format for panel ${idx}:`, result);
+                        displayMessage(idx, "assistant", "Error: Invalid response from server", 0, null);
                         return;
                     }
 
@@ -416,37 +421,19 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
                     const duration = result.duration || 0;
                     const thinking = result.thinking || null;
 
-                    // Display message immediately as it arrives
                     if (content.startsWith("Error:")) {
-                        displayMessage(panelIndex, "assistant", content, duration, thinking);
+                        displayMessage(idx, "assistant", content, duration, thinking);
                     } else {
-                        // Add to context for next message
-                        panelStates[panelIndex].messages.push({
-                            role: "assistant",
-                            content: content,
-                        });
-                        displayMessage(
-                            panelIndex,
-                            "assistant",
-                            content,
-                            duration,
-                            thinking
-                        );
+                        panelStates[idx].messages.push({ role: "assistant", content: content });
+                        displayMessage(idx, "assistant", content, duration, thinking);
                     }
                 })
                 .catch((error) => {
-                    console.error(`Error for panel ${panelIndex}:`, error);
-                    displayMessage(
-                        panelIndex,
-                        "assistant",
-                        `Error: ${error.message}`,
-                        0,
-                        null
-                    );
+                    console.error(`Error for panel ${idx}:`, error);
+                    displayMessage(idx, "assistant", `Error: ${error.message}`, 0, null);
                 });
         });
 
-        // Wait for all requests to complete
         await Promise.all(requests);
 
         if (isGlobal) {
@@ -474,35 +461,29 @@ async function sendRequestStreaming(panels, isGlobal = false, panelIndex = null)
 }
 
 function displayMessage(panelIndex, role, content, duration = null, thinking = null) {
-    // Validate inputs
     if (!panelStates[panelIndex]) {
         console.error(`Panel ${panelIndex} not found`);
         return;
     }
 
     const state = panelStates[panelIndex];
-
     if (!state.chatArea) {
         console.error(`Chat area not found for panel ${panelIndex}`);
         return;
     }
 
-    // Validate content
     if (content === null || content === undefined) {
         console.error(`Invalid content for panel ${panelIndex}:`, content);
         content = "Error: Empty response from model";
     }
-
     if (typeof content !== "string") {
         content = String(content);
     }
 
-    // Create message elements
     try {
         const messageDiv = document.createElement("div");
         messageDiv.className = `message ${role}`;
 
-        // Add thinking container if thinking exists (BEFORE content)
         if (thinking && role === "assistant") {
             const thinkingContainer = document.createElement("div");
             thinkingContainer.className = "thinking-container";
@@ -523,7 +504,6 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
             const thinkingContent = document.createElement("div");
             thinkingContent.className = "thinking-content";
 
-            // Render thinking as markdown
             try {
                 thinkingContent.innerHTML = marked.parse(thinking);
             } catch (e) {
@@ -535,18 +515,15 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
             thinkingContainer.appendChild(thinkingContent);
             messageDiv.appendChild(thinkingContainer);
 
-            // Add toggle functionality
             thinkingToggle.addEventListener("click", () => {
                 thinkingContent.classList.toggle("open");
                 toggleIcon.classList.toggle("open");
             });
         }
 
-        // Add content bubble (after thinking)
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
 
-        // Render content as markdown
         try {
             bubble.innerHTML = marked.parse(content);
         } catch (e) {
@@ -556,7 +533,6 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
 
         messageDiv.appendChild(bubble);
 
-        // Add timing info for assistant messages
         if (duration !== null && role === "assistant") {
             const timingDiv = document.createElement("div");
             timingDiv.className = "message-timing";
@@ -565,15 +541,10 @@ function displayMessage(panelIndex, role, content, duration = null, thinking = n
         }
 
         state.chatArea.appendChild(messageDiv);
-
-        // Force reflow to ensure rendering happens immediately
         state.chatArea.offsetHeight;
 
-        // Use requestAnimationFrame to ensure rendering on next frame
         requestAnimationFrame(() => {
-            // Scroll to bottom
             state.chatArea.scrollTop = state.chatArea.scrollHeight;
-            // Force another reflow
             state.chatArea.offsetHeight;
         });
     } catch (e) {

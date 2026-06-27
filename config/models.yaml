@@ -1,0 +1,154 @@
+# =============================================================================
+# AI4AIS multi-model comparison panel — configuration
+# =============================================================================
+# Everything the app knows about models and providers lives here. Add a model by
+# adding an entry under `models:`; add a provider by adding one under `backends:`.
+# No Python changes needed for either.
+#
+# Reasoning effort is configurable two ways:
+#   1. Per model, via the `reasoning_effort` field below (the default).
+#   2. Per panel at runtime, via the dropdown in each panel's header (overrides
+#      the default for that one request).
+# =============================================================================
+
+# App-wide defaults. Any model field left unset inherits from here.
+defaults:
+  max_tokens: 16000
+  temperature: null            # null => omitted from the request (right for reasoning models)
+  top_p: null
+  timeout: 180                 # seconds per request
+  panel_count: 6               # panels shown on load (1-6)
+  # Options offered in every panel's reasoning-effort dropdown. "default" means
+  # "use the model's configured reasoning_effort"; the rest are passed through.
+  reasoning_effort_options: ["default", "none", "minimal", "low", "medium", "high"]
+
+# -----------------------------------------------------------------------------
+# Backends: where requests go and how reasoning effort is expressed on the wire.
+#   type:            "openai" (OpenAI-compatible /chat/completions) or "anthropic"
+#   base_url:        chat-completions base URL (openai-type only)
+#   api_key_env:     env var holding the API key
+#   reasoning_style: how a model's effort is encoded for this backend, one of:
+#       effort      -> body["reasoning_effort"] = <effort>      (OpenAI native)
+#       openrouter  -> body["reasoning"] = {"effort": <effort>} (OpenRouter unified)
+#       adaptive    -> Anthropic adaptive thinking + output_config.effort (Opus 4.7/4.8+)
+#       budget      -> Anthropic manual extended thinking via thinking_budget_tokens
+#       none        -> no reasoning params sent
+#   max_tokens_param: name of the token-cap field (openai-type only). OpenAI
+#                     reasoning models require "max_completion_tokens"; most
+#                     other providers want "max_tokens".
+#   extra_headers:   optional headers added to every request to this backend
+# A model may override `reasoning_style` (e.g. an old Anthropic model on "budget").
+# -----------------------------------------------------------------------------
+backends:
+  openai:
+    type: openai
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    reasoning_style: effort
+    max_tokens_param: max_completion_tokens
+
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    reasoning_style: adaptive
+
+  openrouter:
+    type: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    reasoning_style: openrouter
+    max_tokens_param: max_tokens
+    extra_headers:
+      HTTP-Referer: http://localhost:8000
+      X-Title: AI4AIS Comparison Panel
+
+# -----------------------------------------------------------------------------
+# Models. Each `id` is what the UI and API use. `model_name` is the provider's
+# own identifier. `label` is the human-readable name shown in the dropdown.
+# Per-model knobs: reasoning_effort, max_tokens, temperature, top_p,
+# thinking_budget_tokens, reasoning_style (override), openrouter_provider.
+#
+# openrouter_provider: optional OpenRouter provider routing, e.g. "atlas-cloud"
+# or "atlas-cloud/fp8" (slug, optional /quantization). Omit to let OpenRouter
+# pick. Builds extra_body={"provider": {"order": [...], "quantizations": [...],
+# "allow_fallbacks": false}}.
+# -----------------------------------------------------------------------------
+models:
+  # --- OpenAI ----------------------------------------------------------------
+  - id: chat-latest
+    label: OpenAI chat-latest
+    backend: openai
+    model_name: chat-latest
+    max_tokens: 32000
+    reasoning_effort: medium
+
+  - id: gpt-5.5
+    label: OpenAI GPT-5.5
+    backend: openai
+    model_name: gpt-5.5
+    reasoning_effort: medium
+
+  - id: gpt-5.2
+    label: OpenAI GPT-5.2
+    backend: openai
+    model_name: gpt-5.2
+    reasoning_effort: medium
+
+  # --- Anthropic -------------------------------------------------------------
+  - id: claude-opus-4.8
+    label: Claude 4.8 Opus
+    backend: anthropic
+    model_name: claude-opus-4-8
+    reasoning_effort: high          # adaptive thinking
+
+  - id: claude-opus-4.6
+    label: Claude 4.6 Opus
+    backend: anthropic
+    model_name: claude-opus-4-6
+    reasoning_effort: high          # adaptive thinking
+
+  - id: claude-sonnet-4.6
+    label: Claude 4.6 Sonnet
+    backend: anthropic
+    model_name: claude-sonnet-4-6
+    reasoning_effort: low           # adaptive thinking
+
+  # --- GLM (via OpenRouter) --------------------------------------------------
+  - id: glm-5.2
+    label: GLM-5.2 (OpenRouter)
+    backend: openrouter
+    model_name: z-ai/glm-5.2
+    max_tokens: 32000
+    reasoning_effort: medium
+    # openrouter_provider: atlas-cloud/fp8   # uncomment to pin a provider
+
+  # --- Moonshot / Kimi (via OpenRouter) --------------------------------------
+  - id: kimi-k2.6
+    label: Kimi K2.6 (OpenRouter)
+    backend: openrouter
+    model_name: moonshotai/kimi-k2.6
+    reasoning_effort: none          # Kimi K2.6 is non-reasoning
+    # openrouter_provider: atlas-cloud/int4
+
+  # --- Gemini (via OpenRouter) -----------------------------------------------
+  - id: gemini-3.1-pro
+    label: Gemini 3.1 Pro
+    backend: openrouter
+    model_name: google/gemini-3.1-pro-preview
+    reasoning_effort: medium
+
+  - id: gemini-3.5-flash
+    label: Gemini 3.5 Flash
+    backend: openrouter
+    model_name: google/gemini-3.5-flash
+    reasoning_effort: minimal
+
+# Which models fill the panels on page load, top to bottom (falls back to the
+# first model if there are more panels than entries). Use the `id`s above.
+default_panel_models:
+  - chat-latest
+  - gpt-5.5
+  - claude-sonnet-4.6
+  - claude-opus-4.8
+  - gemini-3.5-flash
+  - kimi-k2.6

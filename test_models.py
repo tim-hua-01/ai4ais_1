@@ -1,106 +1,84 @@
 #!/usr/bin/env python3
-"""Test script to validate all model providers with system messages."""
+"""Smoke-test every configured model with a system message.
+
+Reads config/models.yaml (the same config the server uses), sends a short prompt
+with a system instruction to each model that has an API key configured, and
+checks the model both responds and honours the system message.
+
+    python test_models.py                 # test all configured models
+    python test_models.py glm-5.2 chat-latest   # test specific model ids
+"""
 
 import asyncio
-import os
 import sys
-from dotenv import load_dotenv
 
-# Add app to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+from app.api_clients import call_model
+from app.config import load_config
 
-from app.api_clients import (
-    call_openai_gpt5,
-    call_anthropic_opus_46,
-    call_anthropic_opus_45,
-    call_zai_glm47,
-    call_moonshot_kimi,
-    call_openrouter_gemini,
-)
+# API keys come from the environment (OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY).
 
-load_dotenv()
-
-# Test messages with system message that requires a specific behavior
+# System message asks for a specific behaviour so we can verify compliance.
 TEST_MESSAGES = [
-    {"role": "system", "content": "Today is the user's birthday! You must congratulate them by saying 'Happy Birthday!' in your response."},
+    {
+        "role": "system",
+        "content": "Today is the user's birthday! You must congratulate them by saying 'Happy Birthday!' in your response.",
+    },
     {"role": "user", "content": "What is 2+2?"},
 ]
 
-async def test_model(name, api_func, api_key):
-    """Test a single model provider."""
-    if not api_key:
-        print(f"❌ {name}: No API key configured")
-        return False
 
+async def test_model(model, api_key) -> bool:
+    print(f"\n🧪 Testing {model.id} ({model.label}) via {model.backend.name}...")
     try:
-        print(f"\n🧪 Testing {name}...")
-        response_data, duration = await api_func(TEST_MESSAGES, api_key)
+        response_data, duration = await call_model(model, TEST_MESSAGES, api_key)
+        content = response_data.get("content", "")
 
-        content = response_data.get('content', '')
-
-        # Check for error in response
         if content.startswith("Error:"):
-            print(f"❌ {name}: API ERROR")
-            print(f"   Error: {content[:150]}")
+            print(f"❌ {model.id}: API ERROR\n   {content[:200]}")
             return False
 
-        # Check if model followed the system message instruction
-        if "happy birthday" in content.lower() or "birthday" in content.lower():
-            print(f"✅ {name}: SUCCESS - Followed system message")
-            print(f"   Duration: {duration:.2f}s")
-            print(f"   Response: {content[:100]}...")
-            if response_data.get('thinking'):
-                print(f"   Thinking: {response_data.get('thinking')[:80]}...")
-            return True
-        else:
-            print(f"⚠️  {name}: Response received but didn't follow system message")
-            print(f"   Duration: {duration:.2f}s")
-            print(f"   Response: {content[:100]}...")
-            print(f"   Expected: Response to include 'Happy Birthday'")
-            return False
-
-    except Exception as e:
-        print(f"❌ {name}: FAILED")
-        print(f"   Error: {type(e).__name__}: {str(e)[:200]}")
+        followed = "birthday" in content.lower()
+        marker = "✅" if followed else "⚠️ "
+        print(f"{marker} {model.id}: {'followed system message' if followed else 'responded but ignored system message'}")
+        print(f"   Duration: {duration:.2f}s")
+        print(f"   Response: {content[:120]}...")
+        if response_data.get("thinking"):
+            print(f"   Thinking: {response_data['thinking'][:80]}...")
+        return followed
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ {model.id}: FAILED\n   {type(exc).__name__}: {str(exc)[:200]}")
         return False
 
-async def run_tests():
-    """Run tests for all model providers."""
+
+async def run_tests(model_ids: list[str]) -> None:
+    config = load_config()
+    selected = model_ids or list(config.models)
+
     print("=" * 60)
-    print("Model Provider System Message Compatibility Test")
+    print("Model Provider Smoke Test (system-message compliance)")
     print("=" * 60)
 
-    tests = [
-        ("OpenAI GPT-5.2", call_openai_gpt5, os.getenv("OPENAI_API_KEY")),
-        ("Anthropic Claude 4.6 Opus", call_anthropic_opus_46, os.getenv("ANTHROPIC_API_KEY")),
-        ("Anthropic Claude 4.5 Opus", call_anthropic_opus_45, os.getenv("ANTHROPIC_API_KEY")),
-        ("Z.AI GLM-4.7", call_zai_glm47, os.getenv("ZAI_API_KEY")),
-        ("Moonshot Kimi K2.5", call_moonshot_kimi, os.getenv("MOONSHOT_API_KEY")),
-        ("OpenRouter Gemini-3-pro-preview", call_openrouter_gemini, os.getenv("OPENROUTER_API_KEY")),
-    ]
+    results: list[tuple[str, bool | None]] = []
+    for model_id in selected:
+        model = config.models.get(model_id)
+        if model is None:
+            print(f"\n❓ Unknown model id: {model_id} (skipping)")
+            results.append((model_id, None))
+            continue
+        api_key = model.backend.api_key
+        if not api_key or api_key.startswith("your_"):
+            print(f"\n⏭️  {model_id}: no API key ({model.backend.api_key_env}) — skipping")
+            results.append((model_id, None))
+            continue
+        results.append((model_id, await test_model(model, api_key)))
 
-    results = []
-    for name, func, key in tests:
-        result = await test_model(name, func, key)
-        results.append((name, result))
-
-    # Summary
     print("\n" + "=" * 60)
-    print("SUMMARY - System Message Compliance")
+    print("SUMMARY")
     print("=" * 60)
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-    print(f"Models following system instructions: {passed}/{total}")
-    print()
     for name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
+        status = {True: "✅ PASS", False: "❌ FAIL", None: "⏭️  SKIP"}[result]
         print(f"{status}: {name}")
 
-    print("\n" + "=" * 60)
-    if passed == total:
-        print("✅ All models properly support system messages!")
-    else:
-        print(f"⚠️  {total - passed} model(s) need investigation")
 
 if __name__ == "__main__":
-    asyncio.run(run_tests())
+    asyncio.run(run_tests(sys.argv[1:]))
