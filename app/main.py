@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from .api_clients import call_model
 from .config import AppConfig, load_config
 
-# API keys are read straight from the environment (os.getenv in app.config). Run
+# API keys are read straight from the environment (os.getenv in app.config).
 # Set OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY before starting.
 
 # Resolve paths relative to the project root so the server runs from any CWD.
