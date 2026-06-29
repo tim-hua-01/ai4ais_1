@@ -37,7 +37,7 @@ python <script_name>.py
 
 #### Run the multi-model comparison web app
 ```bash
-uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 ```
 Then open `http://localhost:8000` in your browser.
 

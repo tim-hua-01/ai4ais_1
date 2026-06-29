@@ -35,20 +35,16 @@ config edit, not a code change.
 
 ## Setup & running
 
-API keys are read **straight from the environment** (no `.env` / dotenv). Run the
-server with the provider API keys set in your environment.
-
-Required env vars (only for the providers you actually use):
-
-```
-OPENAI_API_KEY        # OpenAI models
-ANTHROPIC_API_KEY     # Claude models
-OPENROUTER_API_KEY    # GLM, Kimi/Moonshot, Gemini (all routed via OpenRouter)
-```
+API keys are read **straight from the environment** (no `.env` / dotenv). Set the
+relevant vars for the providers you use, then start the server:
 
 ```bash
+export OPENAI_API_KEY=...        # OpenAI models
+export ANTHROPIC_API_KEY=...     # Claude models
+export OPENROUTER_API_KEY=...    # GLM, Kimi/Moonshot, Gemini (all via OpenRouter)
+
 uv sync
-uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 # then open http://localhost:8000
 ```
 
